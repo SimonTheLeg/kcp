@@ -19,6 +19,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -70,13 +71,20 @@ func configForCluster(base *rest.Config, clusterPath string) *rest.Config {
 
 // createWorkspaces creates workspaceCount workspaces under the root workspace
 // and waits for each to become Ready. It returns the URLs of the ready workspaces.
-func createWorkspaces(t *testing.T, rootClient dynamic.Interface, qps float64) []string {
+func createWorkspaces(t *testing.T, rootClient dynamic.Interface, qps float64) ([]string, measurement.Section) {
 	t.Helper()
 
 	fmt.Println("Phase 1: creating workspaces")
 
-	sink := &measurement.Memory{
-		Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
+	section := measurement.Section{
+		Title: "Workspace Creation",
+		Parameters: []measurement.Parameter{
+			{Key: "Workspaces", Value: fmt.Sprintf("%d", workspaceCount)},
+			{Key: "QPS", Value: fmt.Sprintf("%.0f", qps)},
+		},
+		Sink: &measurement.Memory{
+			Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
+		},
 	}
 
 	workspaceURLs := make([]string, workspaceCount)
@@ -126,26 +134,28 @@ func createWorkspaces(t *testing.T, rootClient dynamic.Interface, qps float64) [
 		return nil
 	}
 
-	errs := framework.Execute(ts, action, sink)
+	errs := framework.Execute(ts, action, section.Sink)
 	require.Empty(t, errs, "workspace creation phase encountered errors", errs)
 
-	fmt.Printf("=== Workspace Creation Results %d workspaces (%.0f qps) ===\n", workspaceCount, qps)
-	for k, v := range sink.Results() {
-		fmt.Printf("  %s: %.2f ms\n", k, v)
-	}
-
-	return workspaceURLs
+	return workspaceURLs, section
 }
 
 // crudConfigMaps performs a Create/Update/Delete cycle for a ConfigMap in each
 // of the workspaces identified by workspaceURLs.
-func crudConfigMaps(t *testing.T, baseCfg *rest.Config, workspaceURLs []string, qps float64) {
+func crudConfigMaps(t *testing.T, baseCfg *rest.Config, workspaceURLs []string, qps float64) measurement.Section {
 	t.Helper()
 
 	fmt.Println("Phase 2: CRUD ConfigMaps")
 
-	sink := &measurement.Memory{
-		Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
+	section := measurement.Section{
+		Title: "ConfigMap CRUD",
+		Parameters: []measurement.Parameter{
+			{Key: "Workspaces", Value: fmt.Sprintf("%d", workspaceCount)},
+			{Key: "QPS", Value: fmt.Sprintf("%.0f", qps)},
+		},
+		Sink: &measurement.Memory{
+			Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
+		},
 	}
 
 	// Pre-create a dynamic client per workspace so client setup time is
@@ -211,13 +221,10 @@ func crudConfigMaps(t *testing.T, baseCfg *rest.Config, workspaceURLs []string, 
 		return nil
 	}
 
-	errs := framework.Execute(ts, action, sink)
+	errs := framework.Execute(ts, action, section.Sink)
 	require.Empty(t, errs, "CRUD phase encountered errors")
 
-	fmt.Printf("=== ConfigMap CRUD Results %d workspaces (%.0f qps) ===\n", workspaceCount, qps)
-	for k, v := range sink.Results() {
-		fmt.Printf("  %s: %.2f ms\n", k, v)
-	}
+	return section
 }
 
 func TestWorkspaceCRUD(t *testing.T) {
@@ -225,10 +232,6 @@ func TestWorkspaceCRUD(t *testing.T) {
 	t.Setenv(string(framework.KCPFrontProxyKubeconfig), "/Users/simonbein/code/github/simontheleg/kcp/test/load/setup/admin.kubeconfig")
 
 	cfg := framework.Require(t, framework.KCPFrontProxyKubeconfig)
-
-	// Disable client-side rate limiting entirely so the tuning sets control the actual QPS.
-	// TODO move this into a central place during setup
-	cfg.FrontProxyKubeconfig.QPS = -1
 
 	// Client targeting the root workspace
 	rootConfig := configForCluster(cfg.FrontProxyKubeconfig, "root")
@@ -249,6 +252,14 @@ func TestWorkspaceCRUD(t *testing.T) {
 	createWorkspaceQPS := 5.0
 	crudConfigMapQPS := 10.0
 
-	workspaceURLs := createWorkspaces(t, rootClient, createWorkspaceQPS)
-	crudConfigMaps(t, cfg.FrontProxyKubeconfig, workspaceURLs, crudConfigMapQPS)
+	workspaceURLs, createSection := createWorkspaces(t, rootClient, createWorkspaceQPS)
+	crudSection := crudConfigMaps(t, cfg.FrontProxyKubeconfig, workspaceURLs, crudConfigMapQPS)
+
+	report := &measurement.Report{
+		Sections: []measurement.Section{
+			createSection,
+			crudSection,
+		},
+	}
+	report.PrettyPrint(os.Stdout)
 }
