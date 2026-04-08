@@ -20,18 +20,21 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
+
+	kcpkubernetesclientset "github.com/kcp-dev/client-go/kubernetes"
+	"github.com/kcp-dev/logicalcluster/v3"
+	"github.com/kcp-dev/sdk/apis/core"
+	corev1alpha1kcp "github.com/kcp-dev/sdk/apis/core/v1alpha1"
+	tenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned/cluster"
 
 	"github.com/kcp-dev/kcp/test/load/pkg/framework"
 	"github.com/kcp-dev/kcp/test/load/pkg/measurement"
@@ -40,41 +43,33 @@ import (
 )
 
 const workspaceCount = 1000
+const WorkspaceNamePrefix = "loadtest-ws-"
 
-var (
-	// TODO use the builtin GVR
-	workspaceGVR = schema.GroupVersionResource{
-		Group:    "tenancy.kcp.io",
-		Version:  "v1alpha1",
-		Resource: "workspaces",
-	}
-	configMapGVR = schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "configmaps",
-	}
-)
+// workspaceName returns the predictable name for a workspace at the given
+// sequence number.
+func workspaceName(seq int) string {
+	return fmt.Sprintf("%s%d", WorkspaceNamePrefix, seq)
+}
 
-// configForCluster returns a rest.Config that targets the given kcp logical
-// cluster path (e.g. "root" or "root:my-ws"). Any existing /clusters/ segment
-// in the host URL is replaced.
-// TODO I think this exists also somewhere upstream
-func configForCluster(base *rest.Config, clusterPath string) *rest.Config {
-	cfg := rest.CopyConfig(base)
-	host := strings.TrimSuffix(cfg.Host, "/")
-	if idx := strings.Index(host, "/clusters/"); idx != -1 {
-		host = host[:idx]
-	}
-	cfg.Host = host + "/clusters/" + clusterPath
-	return cfg
+// workspaceClusterPath returns the logical cluster path for a workspace
+// at the given sequence number (e.g. "root:loadtest-ws-0").
+func workspaceClusterPath(seq int) logicalcluster.Path {
+	return core.RootCluster.Path().Join(workspaceName(seq))
+}
+
+// workspacesExist checks whether count workspaces already exist by
+// verifying that the last workspace name is present. This is a cheap heuristic
+// that avoids listing all workspaces.
+func workspacesExist(client kcpclientset.ClusterInterface, count int) bool {
+	lastName := workspaceName(count - 1)
+	_, err := client.Cluster(core.RootCluster.Path()).TenancyV1alpha1().Workspaces().Get(context.Background(), lastName, metav1.GetOptions{})
+	return err == nil
 }
 
 // createWorkspaces creates workspaceCount workspaces under the root workspace
-// and waits for each to become Ready. It returns the URLs of the ready workspaces.
-func createWorkspaces(t *testing.T, rootClient dynamic.Interface, qps float64) ([]string, measurement.Section) {
+// and waits for each to become Ready.
+func createWorkspaces(t *testing.T, client kcpclientset.ClusterInterface, qps float64) measurement.Section {
 	t.Helper()
-
-	fmt.Println("Phase 1: creating workspaces")
 
 	section := measurement.Section{
 		Title: "Workspace Creation",
@@ -87,45 +82,34 @@ func createWorkspaces(t *testing.T, rootClient dynamic.Interface, qps float64) (
 		},
 	}
 
-	workspaceURLs := make([]string, workspaceCount)
+	wsClient := client.Cluster(core.RootCluster.Path()).TenancyV1alpha1().Workspaces()
 
 	ts := tuningset.NewUniformQPS(qps, workspaceCount, 0)
 	action := func(seq int, s measurement.Sink) error {
 		defer measurement.RecordElapsedDurationMS(time.Now(), s)
 
 		ctx := context.Background()
-		wsName := fmt.Sprintf("loadtest-%d", seq)
+		wsName := workspaceName(seq)
 
-		ws := &unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"apiVersion": "tenancy.kcp.io/v1alpha1",
-				"kind":       "Workspace",
-				"metadata": map[string]interface{}{
-					"name": wsName,
-				},
+		ws := &tenancyv1alpha1.Workspace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: wsName,
 			},
 		}
 
-		_, err := rootClient.Resource(workspaceGVR).Create(ctx, ws, metav1.CreateOptions{})
+		_, err := wsClient.Create(ctx, ws, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("create workspace %s: %w", wsName, err)
 		}
 
 		// Poll until the workspace reaches the Ready phase.
-		// TODO rewrite this using stretchr/testify
 		err = wait.PollUntilContextTimeout(ctx, 500*time.Millisecond, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
-			got, err := rootClient.Resource(workspaceGVR).Get(ctx, wsName, metav1.GetOptions{})
+			got, err := wsClient.Get(ctx, wsName, metav1.GetOptions{})
 			if err != nil {
-				// TODO investigate transient error
-				return false, nil // transient error, retry
+				// on errors we want to retry
+				return false, nil //nolint:nilerr
 			}
-			phase, _, _ := unstructured.NestedString(got.Object, "status", "phase")
-			if phase == "Ready" {
-				url, _, _ := unstructured.NestedString(got.Object, "spec", "URL")
-				workspaceURLs[seq] = url
-				return true, nil
-			}
-			return false, nil
+			return got.Status.Phase == corev1alpha1kcp.LogicalClusterPhaseReady, nil
 		})
 		if err != nil {
 			return fmt.Errorf("workspace %s did not become ready: %w", wsName, err)
@@ -137,15 +121,13 @@ func createWorkspaces(t *testing.T, rootClient dynamic.Interface, qps float64) (
 	errs := framework.Execute(ts, action, section.Sink)
 	require.Empty(t, errs, "workspace creation phase encountered errors", errs)
 
-	return workspaceURLs, section
+	return section
 }
 
 // crudConfigMaps performs a Create/Update/Delete cycle for a ConfigMap in each
-// of the workspaces identified by workspaceURLs.
-func crudConfigMaps(t *testing.T, baseCfg *rest.Config, workspaceURLs []string, qps float64) measurement.Section {
+// of the workspaces.
+func crudConfigMaps(t *testing.T, kubeClusterClient kcpkubernetesclientset.ClusterInterface, qps float64) measurement.Section {
 	t.Helper()
-
-	fmt.Println("Phase 2: CRUD ConfigMaps")
 
 	section := measurement.Section{
 		Title: "ConfigMap CRUD",
@@ -158,62 +140,45 @@ func crudConfigMaps(t *testing.T, baseCfg *rest.Config, workspaceURLs []string, 
 		},
 	}
 
-	// Pre-create a dynamic client per workspace so client setup time is
-	// not included in the CRUD measurement.
-	// TODO change this pre-allocation, I don't think we need to do that, we can just trigger the measurement later
-	wsClients := make([]dynamic.Interface, workspaceCount)
-	for i := range workspaceCount {
-		wsCfg := rest.CopyConfig(baseCfg)
-		wsCfg.Host = workspaceURLs[i]
-		var err error
-		wsClients[i], err = dynamic.NewForConfig(wsCfg)
-		require.NoError(t, err)
-	}
-
 	ts := tuningset.NewUniformQPS(qps, workspaceCount, 0)
 	action := func(seq int, s measurement.Sink) error {
+		cmClient := kubeClusterClient.Cluster(workspaceClusterPath(seq)).CoreV1().ConfigMaps("default")
+
 		defer measurement.RecordElapsedDurationMS(time.Now(), s)
 
 		ctx := context.Background()
-		client := wsClients[seq]
 		cmName := fmt.Sprintf("loadtest-cm-%d", seq)
 
 		// --- Create ---
-		cm := &unstructured.Unstructured{
-			Object: map[string]interface{}{
-				"apiVersion": "v1",
-				"kind":       "ConfigMap",
-				"metadata": map[string]interface{}{
-					"name":      cmName,
-					"namespace": "default",
-				},
-				"data": map[string]interface{}{
-					"key1": "value1",
-					"key2": "value2",
-				},
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      cmName,
+				Namespace: "default",
+			},
+			Data: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
 			},
 		}
 
-		created, err := client.Resource(configMapGVR).Namespace("default").Create(ctx, cm, metav1.CreateOptions{})
+		created, err := cmClient.Create(ctx, cm, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("create configmap in ws %d: %w", seq, err)
 		}
 
 		// --- Update ---
-		if err := unstructured.SetNestedStringMap(created.Object, map[string]string{
+		created.Data = map[string]string{
 			"key1": "updated-value1",
 			"key2": "updated-value2",
 			"key3": "new-value3",
-		}, "data"); err != nil {
-			return fmt.Errorf("set data for configmap in ws %d: %w", seq, err)
 		}
-		_, err = client.Resource(configMapGVR).Namespace("default").Update(ctx, created, metav1.UpdateOptions{})
+		_, err = cmClient.Update(ctx, created, metav1.UpdateOptions{})
 		if err != nil {
 			return fmt.Errorf("update configmap in ws %d: %w", seq, err)
 		}
 
 		// --- Delete ---
-		err = client.Resource(configMapGVR).Namespace("default").Delete(ctx, cmName, metav1.DeleteOptions{})
+		err = cmClient.Delete(ctx, cmName, metav1.DeleteOptions{})
 		if err != nil {
 			return fmt.Errorf("delete configmap in ws %d: %w", seq, err)
 		}
@@ -233,17 +198,19 @@ func TestWorkspaceCRUD(t *testing.T) {
 
 	cfg := framework.Require(t, framework.KCPFrontProxyKubeconfig)
 
-	// Client targeting the root workspace
-	rootConfig := configForCluster(cfg.FrontProxyKubeconfig, "root")
-	rootClient, err := dynamic.NewForConfig(rootConfig)
+	client, err := kcpclientset.NewForConfig(cfg.FrontProxyKubeconfig)
+	require.NoError(t, err)
+
+	kubeClusterClient, err := kcpkubernetesclientset.NewForConfig(cfg.FrontProxyKubeconfig)
 	require.NoError(t, err)
 
 	// Clean up workspaces when the test finishes
 	// TODO fix cleanup later
 	// t.Cleanup(func() {
+	// 	wsClient := client.Cluster(core.RootCluster.Path()).TenancyV1alpha1().Workspaces()
 	// 	for i := range workspaceCount {
-	// 		wsName := fmt.Sprintf("loadtest-ws-%d", i)
-	// 		if err = rootClient.Resource(workspaceGVR).Delete(context.Background(), wsName, metav1.DeleteOptions{}); err != nil {
+	// 		wsName := workspaceName(i)
+	// 		if err = wsClient.Delete(context.Background(), wsName, metav1.DeleteOptions{}); err != nil {
 	// 			t.Logf("failed to delete workspace %s. Please clean up manually!: %v", wsName, err)
 	// 		}
 	// 	}
@@ -252,14 +219,22 @@ func TestWorkspaceCRUD(t *testing.T) {
 	createWorkspaceQPS := 5.0
 	crudConfigMapQPS := 10.0
 
-	workspaceURLs, createSection := createWorkspaces(t, rootClient, createWorkspaceQPS)
-	crudSection := crudConfigMaps(t, cfg.FrontProxyKubeconfig, workspaceURLs, crudConfigMapQPS)
+	var sections []measurement.Section
+
+	t.Logf("Creating required workspaces")
+	if workspacesExist(client, workspaceCount) {
+		t.Logf("workspaces already exist, skipping creation")
+	} else {
+		createSection := createWorkspaces(t, client, createWorkspaceQPS)
+		sections = append(sections, createSection)
+	}
+
+	t.Logf("Running configmap CRUD operations")
+	crudSection := crudConfigMaps(t, kubeClusterClient, crudConfigMapQPS)
+	sections = append(sections, crudSection)
 
 	report := &measurement.Report{
-		Sections: []measurement.Section{
-			createSection,
-			crudSection,
-		},
+		Sections: sections,
 	}
 	report.PrettyPrint(os.Stdout)
 }
