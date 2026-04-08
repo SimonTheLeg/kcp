@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,6 +105,12 @@ func loadKubeconfig(t *testing.T, kubeconfigPath string) *rest.Config {
 
 	restConfig, err := clientcmd.NewNonInteractiveClientConfig(*rawConfig, rawConfig.CurrentContext, nil, nil).ClientConfig()
 	require.NoError(t, err, "failed to create rest.Config from %s", kubeconfigPath)
+
+	// Strip any /clusters/<path> suffix from the Host URL. KCP kubeconfigs
+	// often include this, but cluster-aware clients append it themselves.
+	if i := strings.Index(restConfig.Host, "/clusters/"); i != -1 {
+		restConfig.Host = restConfig.Host[:i]
+	}
 
 	restConfig.UserAgent = "kcp-load-test"
 
