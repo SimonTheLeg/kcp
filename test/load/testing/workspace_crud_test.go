@@ -85,6 +85,7 @@ func createWorkspaces(t *testing.T, client kcpclientset.ClusterInterface, qps fl
 	wsClient := client.Cluster(core.RootCluster.Path()).TenancyV1alpha1().Workspaces()
 
 	ts := tuningset.NewUniformQPS(qps, workspaceCount, 0)
+	section.Start()
 	action := func(seq int, s measurement.Sink) error {
 		defer measurement.RecordElapsedDurationMS(time.Now(), s)
 
@@ -119,6 +120,7 @@ func createWorkspaces(t *testing.T, client kcpclientset.ClusterInterface, qps fl
 	}
 
 	errs := framework.Execute(ts, action, section.Sink)
+	section.End()
 	require.Empty(t, errs, "workspace creation phase encountered errors", errs)
 
 	return section
@@ -141,6 +143,7 @@ func crudConfigMaps(t *testing.T, kubeClusterClient kcpkubernetesclientset.Clust
 	}
 
 	ts := tuningset.NewUniformQPS(qps, workspaceCount, 0)
+	section.Start()
 	action := func(seq int, s measurement.Sink) error {
 		cmClient := kubeClusterClient.Cluster(workspaceClusterPath(seq)).CoreV1().ConfigMaps("default")
 
@@ -187,6 +190,7 @@ func crudConfigMaps(t *testing.T, kubeClusterClient kcpkubernetesclientset.Clust
 	}
 
 	errs := framework.Execute(ts, action, section.Sink)
+	section.End()
 	require.Empty(t, errs, "CRUD phase encountered errors")
 
 	return section
