@@ -67,41 +67,45 @@ func (r *Report) PrettyPrint(w io.Writer) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 
 	for i, sec := range r.Sections {
-		// separate subsequents sections with a blank line for readability
+		// separate subsequent sections with a blank line for readability
 		if i > 0 {
 			fmt.Fprintln(tw)
 		}
 
 		fmt.Fprintf(tw, "=== %s ===\n", sec.Title)
+
+		// --- Parameters ---
 		for _, p := range sec.Parameters {
 			fmt.Fprintf(tw, "  %s:\t%s\n", p.Key, p.Value)
 		}
 		if sec.TotalDuration > 0 {
 			fmt.Fprintf(tw, "  Total Duration:\t%s\n", sec.TotalDuration.Round(time.Millisecond))
 		}
-		fmt.Fprintf(tw, "Metric\tValue\n")
-		fmt.Fprintf(tw, "------\t-----\n")
-		if len(sec.Errors) > 0 {
-			fmt.Fprintf(tw, "  Errors:\t%d\n", len(sec.Errors))
-			for _, e := range sec.Errors {
-				fmt.Fprintf(tw, "    - %s\n", e.Error())
-			}
-		}
 
+		// --- Results ---
 		results := sec.Sink.Results()
-
-		// Sort keys for deterministic output.
 		keys := make([]string, 0, len(results))
 		for k := range results {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
+		fmt.Fprintln(tw)
+		fmt.Fprintf(tw, "  Metric\tValue\n")
+		fmt.Fprintf(tw, "  ------\t-----\n")
 		for _, k := range keys {
-			fmt.Fprintf(tw, "%s\t%.0f\n", k, results[k])
+			fmt.Fprintf(tw, "  %s\t%.0f\n", k, results[k])
 		}
 
-		// Separator between sections.
+		// --- Errors ---
+		if len(sec.Errors) > 0 {
+			fmt.Fprintln(tw)
+			fmt.Fprintf(tw, "  Errors: %d\n", len(sec.Errors))
+			for _, e := range sec.Errors {
+				fmt.Fprintf(tw, "    - %s\n", e.Error())
+			}
+		}
+
 		fmt.Fprintf(tw, "%s\n", strings.Repeat("-", 40))
 	}
 
