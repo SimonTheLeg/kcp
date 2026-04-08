@@ -38,6 +38,7 @@ type Section struct {
 	Title         string
 	Parameters    []Parameter
 	TotalDuration time.Duration
+	Errors        []error
 	Sink          Sink
 
 	startTime time.Time
@@ -77,6 +78,12 @@ func (r *Report) PrettyPrint(w io.Writer) {
 		}
 		if sec.TotalDuration > 0 {
 			fmt.Fprintf(tw, "  Total Duration:\t%s\n", sec.TotalDuration.Round(time.Millisecond))
+		}
+		if len(sec.Errors) > 0 {
+			fmt.Fprintf(tw, "  Errors:\t%d\n", len(sec.Errors))
+			for _, e := range sec.Errors {
+				fmt.Fprintf(tw, "    - %s\n", e.Error())
+			}
 		}
 		fmt.Fprintf(tw, "Metric\tValue\n")
 		fmt.Fprintf(tw, "------\t-----\n")
