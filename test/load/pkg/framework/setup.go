@@ -115,10 +115,15 @@ func loadKubeconfig(t *testing.T, kubeconfigPath string) *rest.Config {
 	// ignore apiserver warnings to save resources (e.g. on deprecation headers)
 	restConfig.WarningHandler = rest.NoWarnings{}
 
-	restConfig.Transport = &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 100,
-		IdleConnTimeout:     90 * time.Second,
+	// we need to wrap transport, so client-go can build proper TLS settings first
+	// and then we tweak connection pools on the resulting *http.Transport
+	restConfig.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		if t, ok := rt.(*http.Transport); ok {
+			t.MaxIdleConns = 100
+			t.MaxIdleConnsPerHost = 100
+			t.IdleConnTimeout = 90 * time.Second
+		}
+		return rt
 	}
 
 	return restConfig
