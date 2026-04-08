@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 // Parameter is an ordered key-value pair used to describe test metadata
@@ -34,9 +35,22 @@ type Parameter struct {
 // Section pairs a human-readable title with the Sink that collected
 // measurements for that phase of the load test.
 type Section struct {
-	Title      string
-	Parameters []Parameter
-	Sink       Sink
+	Title         string
+	Parameters    []Parameter
+	TotalDuration time.Duration
+	Sink          Sink
+
+	startTime time.Time
+}
+
+// Start records the current time as the start of this section.
+func (s *Section) Start() {
+	s.startTime = time.Now()
+}
+
+// End records the total duration since Start was called.
+func (s *Section) End() {
+	s.TotalDuration = time.Since(s.startTime)
 }
 
 // Report aggregates multiple measurement sections and can pretty-print
@@ -60,6 +74,9 @@ func (r *Report) PrettyPrint(w io.Writer) {
 		fmt.Fprintf(tw, "=== %s ===\n", sec.Title)
 		for _, p := range sec.Parameters {
 			fmt.Fprintf(tw, "  %s:\t%s\n", p.Key, p.Value)
+		}
+		if sec.TotalDuration > 0 {
+			fmt.Fprintf(tw, "  Total Duration:\t%s\n", sec.TotalDuration.Round(time.Millisecond))
 		}
 		fmt.Fprintf(tw, "Metric\tValue\n")
 		fmt.Fprintf(tw, "------\t-----\n")
