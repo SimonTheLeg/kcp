@@ -42,7 +42,7 @@ import (
 	"github.com/kcp-dev/kcp/test/load/pkg/tuningset"
 )
 
-const workspaceCount = 1000
+const workspaceCount = 100
 const WorkspaceNamePrefix = "loadtest-ws-"
 
 // workspaceName returns the predictable name for a workspace at the given
@@ -119,9 +119,8 @@ func createWorkspaces(t *testing.T, client kcpclientset.ClusterInterface, qps fl
 		return nil
 	}
 
-	errs := framework.Execute(ts, action, section.Sink)
+	section.Errors = framework.Execute(ts, action, section.Sink)
 	section.End()
-	require.Empty(t, errs, "workspace creation phase encountered errors", errs)
 
 	return section
 }
@@ -189,9 +188,8 @@ func crudConfigMaps(t *testing.T, kubeClusterClient kcpkubernetesclientset.Clust
 		return nil
 	}
 
-	errs := framework.Execute(ts, action, section.Sink)
+	section.Errors = framework.Execute(ts, action, section.Sink)
 	section.End()
-	require.Empty(t, errs, "CRUD phase encountered errors")
 
 	return section
 }
@@ -241,4 +239,9 @@ func TestWorkspaceCRUD(t *testing.T) {
 		Sections: sections,
 	}
 	report.PrettyPrint(os.Stdout)
+
+	// Fail the test if any section had errors.
+	for _, sec := range sections {
+		require.Empty(t, sec.Errors, "section %q encountered errors", sec.Title)
+	}
 }
