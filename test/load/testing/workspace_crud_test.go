@@ -195,9 +195,6 @@ func crudConfigMaps(t *testing.T, kubeClusterClient kcpkubernetesclientset.Clust
 }
 
 func TestWorkspaceCRUD(t *testing.T) {
-	// TODO remove this later
-	t.Setenv(string(framework.KCPFrontProxyKubeconfig), "/Users/simonbein/code/github/simontheleg/kcp/test/load/setup/admin.kubeconfig")
-
 	cfg := framework.Require(t, framework.KCPFrontProxyKubeconfig)
 
 	client, err := kcpclientset.NewForConfig(cfg.FrontProxyKubeconfig)
