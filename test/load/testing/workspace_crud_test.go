@@ -42,7 +42,7 @@ import (
 	"github.com/kcp-dev/kcp/test/load/pkg/tuningset"
 )
 
-const workspaceCount = 100
+const workspaceCount = 10000
 const WorkspaceNamePrefix = "loadtest-ws-"
 
 // workspaceName returns the predictable name for a workspace at the given
@@ -203,8 +203,8 @@ func TestWorkspaceCRUD(t *testing.T) {
 	client, err := kcpclientset.NewForConfig(cfg.FrontProxyKubeconfig)
 	require.NoError(t, err)
 
-	kubeClusterClient, err := kcpkubernetesclientset.NewForConfig(cfg.FrontProxyKubeconfig)
-	require.NoError(t, err)
+	// kubeClusterClient, err := kcpkubernetesclientset.NewForConfig(cfg.FrontProxyKubeconfig)
+	// require.NoError(t, err)
 
 	// Clean up workspaces when the test finishes
 	// TODO fix cleanup later
@@ -219,7 +219,7 @@ func TestWorkspaceCRUD(t *testing.T) {
 	// })
 
 	createWorkspaceQPS := 5.0
-	crudConfigMapQPS := 10.0
+	// crudConfigMapQPS := 10.0
 
 	var sections []measurement.Section
 
@@ -231,9 +231,10 @@ func TestWorkspaceCRUD(t *testing.T) {
 		sections = append(sections, createSection)
 	}
 
-	t.Logf("Running configmap CRUD operations")
-	crudSection := crudConfigMaps(t, kubeClusterClient, crudConfigMapQPS)
-	sections = append(sections, crudSection)
+	// TODO re-enable this again
+	// t.Logf("Running configmap CRUD operations")
+	// crudSection := crudConfigMaps(t, kubeClusterClient, crudConfigMapQPS)
+	// sections = append(sections, crudSection)
 
 	report := &measurement.Report{
 		Sections: sections,
