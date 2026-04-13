@@ -94,7 +94,7 @@ func (r *Report) PrettyPrint(w io.Writer) {
 		fmt.Fprintf(tw, "  Metric\tValue\n")
 		fmt.Fprintf(tw, "  ------\t-----\n")
 		for _, k := range keys {
-			fmt.Fprintf(tw, "  %s\t%.0f\n", k, results[k])
+			fmt.Fprintf(tw, "  %s\t%f\n", k, results[k])
 		}
 
 		// --- Errors ---
