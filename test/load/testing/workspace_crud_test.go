@@ -75,7 +75,7 @@ func createWorkspaces(t *testing.T, client kcpclientset.ClusterInterface, qps fl
 		Title: "Workspace Creation",
 		Parameters: []measurement.Parameter{
 			{Key: "Workspaces", Value: fmt.Sprintf("%d", workspaceCount)},
-			{Key: "QPS", Value: fmt.Sprintf("%.0f", qps)},
+			{Key: "QPS", Value: fmt.Sprintf("%f", qps)},
 		},
 		Sink: &measurement.Memory{
 			Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
@@ -134,7 +134,7 @@ func crudConfigMaps(t *testing.T, kubeClusterClient kcpkubernetesclientset.Clust
 		Title: "ConfigMap CRUD",
 		Parameters: []measurement.Parameter{
 			{Key: "Workspaces", Value: fmt.Sprintf("%d", workspaceCount)},
-			{Key: "QPS", Value: fmt.Sprintf("%.0f", qps)},
+			{Key: "QPS", Value: fmt.Sprintf("%f", qps)},
 		},
 		Sink: &measurement.Memory{
 			Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
