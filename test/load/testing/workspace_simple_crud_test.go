@@ -1,0 +1,143 @@
+/*
+Copyright 2026 The kcp Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package workspace
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	kcpkubernetesclientset "github.com/kcp-dev/client-go/kubernetes"
+	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned/cluster"
+
+	"github.com/kcp-dev/kcp/test/load/pkg/framework"
+	"github.com/kcp-dev/kcp/test/load/pkg/measurement"
+	"github.com/kcp-dev/kcp/test/load/pkg/stats"
+	"github.com/kcp-dev/kcp/test/load/pkg/tuningset"
+)
+
+const crudConfigMapQPS = 10.0
+
+func TestWorkspaceSimpleCRUD(t *testing.T) {
+	cfg := framework.Require(t, framework.KCPFrontProxyKubeconfig)
+
+	client, err := kcpclientset.NewForConfig(cfg.FrontProxyKubeconfig)
+	require.NoError(t, err)
+
+	kubeClusterClient, err := kcpkubernetesclientset.NewForConfig(cfg.FrontProxyKubeconfig)
+	require.NoError(t, err)
+
+	var sections []measurement.Section
+
+	// Ensure workspaces exist, creating them if necessary.
+	if workspacesExist(client, workspaceCount) {
+		t.Logf("workspaces already exist, skipping creation")
+	} else {
+		t.Logf("Creating required workspaces")
+		createSection := createWorkspaces(t, client, createWorkspaceQPS)
+		sections = append(sections, createSection)
+	}
+
+	t.Logf("Running configmap CRUD operations")
+	crudSection := crudConfigMaps(t, kubeClusterClient, crudConfigMapQPS)
+	sections = append(sections, crudSection)
+
+	report := &measurement.Report{
+		Sections: sections,
+	}
+	report.PrettyPrint(os.Stdout)
+
+	for _, sec := range sections {
+		require.Empty(t, sec.Errors, "section %q encountered errors", sec.Title)
+	}
+}
+
+// crudConfigMaps performs a Create/Update/Delete cycle for a ConfigMap in each
+// of the workspaces.
+func crudConfigMaps(t *testing.T, kubeClusterClient kcpkubernetesclientset.ClusterInterface, qps float64) measurement.Section {
+	t.Helper()
+
+	section := measurement.Section{
+		Title: "ConfigMap CRUD",
+		Parameters: []measurement.Parameter{
+			{Key: "Workspaces", Value: fmt.Sprintf("%d", workspaceCount)},
+			{Key: "QPS", Value: fmt.Sprintf("%f", qps)},
+		},
+		Sink: &measurement.Memory{
+			Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
+		},
+	}
+
+	ts := tuningset.NewUniformQPS(qps, workspaceCount, 0)
+	section.Start()
+	action := func(seq int, s measurement.Sink) error {
+		cmClient := kubeClusterClient.Cluster(workspaceClusterPath(seq)).CoreV1().ConfigMaps("default")
+
+		defer measurement.RecordElapsedDurationMS(time.Now(), s)
+
+		ctx := context.Background()
+		cmName := fmt.Sprintf("loadtest-cm-%d", seq)
+
+		// Create
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      cmName,
+				Namespace: "default",
+			},
+			Data: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
+			},
+		}
+
+		created, err := cmClient.Create(ctx, cm, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("create configmap in ws %d: %w", seq, err)
+		}
+
+		// Update
+		created.Data = map[string]string{
+			"key1": "updated-value1",
+			"key2": "updated-value2",
+			"key3": "new-value3",
+		}
+		_, err = cmClient.Update(ctx, created, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("update configmap in ws %d: %w", seq, err)
+		}
+
+		// Delete
+		err = cmClient.Delete(ctx, cmName, metav1.DeleteOptions{})
+		if err != nil {
+			return fmt.Errorf("delete configmap in ws %d: %w", seq, err)
+		}
+
+		return nil
+	}
+
+	section.Errors = framework.Execute(ts, action, section.Sink)
+	section.End()
+
+	return section
+}
