@@ -44,9 +44,6 @@ func TestExample(t *testing.T) {
 	)
 	t.Logf("front-proxy kubeconfig host: %s", cfg.FrontProxyKubeconfig.Host)
 
-	// a report is the umbrella object for a test run and consists of one or more sections
-	report := &measurement.Report{}
-
 	// each section contains metatada and a datasink
 	section := measurement.Section{
 		Title: "Example Action",
@@ -58,8 +55,6 @@ func TestExample(t *testing.T) {
 			Stats: []stats.NamedStat{stats.P99(), stats.Avg()},
 		},
 	}
-
-	report.Sections = append(report.Sections, section)
 
 	// tuningsets control the execution of a section
 	ts := tuningset.NewUniformQPS(15, 30, 0)
@@ -76,6 +71,9 @@ func TestExample(t *testing.T) {
 	section.End()
 
 	// print out section results in a human-friendly format
+	report := &measurement.Report{
+		Sections: []measurement.Section{section},
+	}
 	report.PrettyPrint(os.Stdout)
 
 	// Fail the test if any section had errors.
