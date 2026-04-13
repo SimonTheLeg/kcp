@@ -125,10 +125,10 @@ func loadKubeconfig(t *testing.T, kubeconfigPath string) *rest.Config {
 	// we need to wrap transport, so client-go can build proper TLS settings first
 	// and then we tweak connection pools on the resulting *http.Transport
 	restConfig.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
-		if t, ok := rt.(*http.Transport); ok {
-			t.MaxIdleConns = 100
-			t.MaxIdleConnsPerHost = 100
-			t.IdleConnTimeout = 90 * time.Second
+		if tr, ok := rt.(*http.Transport); ok {
+			tr.MaxIdleConns = 100
+			tr.MaxIdleConnsPerHost = 100
+			tr.IdleConnTimeout = 90 * time.Second
 		}
 		return rt
 	}
