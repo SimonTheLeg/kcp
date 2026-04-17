@@ -63,9 +63,8 @@ func TestWorkspaceSimpleCRUD(t *testing.T) {
 	crudSection := crudConfigMaps(t, kubeClusterClient, crudConfigMapQPS)
 	sections = append(sections, crudSection)
 
-	report := &measurement.Report{
-		Sections: sections,
-	}
+	report := NewKCPReport(t, "Workspace Simple Configmap CRUD", cfg.FrontProxyKubeconfig)
+	report.Sections = sections
 	report.PrettyPrint(os.Stdout)
 
 	for _, sec := range sections {
