@@ -57,7 +57,18 @@ func (s *Section) End() {
 // Report aggregates multiple measurement sections and can pretty-print
 // them as a single formatted table.
 type Report struct {
+	Title    string
+	Metadata []Parameter
 	Sections []Section
+}
+
+func NewReport(title string) *Report {
+	return &Report{
+		Title: title,
+		Metadata: []Parameter{
+			{Key: "Date", Value: time.Now().Format(time.RFC1123)},
+		},
+	}
 }
 
 // PrettyPrint writes all sections to w as a formatted table.
@@ -65,6 +76,12 @@ type Report struct {
 // its parameters and key/value results from the associated Sink.
 func (r *Report) PrettyPrint(w io.Writer) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintf(tw, "\n=== %s ===\n", r.Title)
+	for _, m := range r.Metadata {
+		fmt.Fprintf(tw, "  %s:\t%s\n", m.Key, m.Value)
+	}
+	fmt.Fprintln(tw)
 
 	for i, sec := range r.Sections {
 		// separate subsequent sections with a blank line for readability
