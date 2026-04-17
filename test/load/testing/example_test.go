@@ -46,7 +46,7 @@ func TestExample(t *testing.T) {
 
 	// each section contains metatada and a datasink
 	section := measurement.Section{
-		Title: "Example Action",
+		Title: "Example Action 1",
 		Parameters: []measurement.Parameter{
 			{Key: "Count", Value: fmt.Sprintf("%d", 30)},
 			{Key: "QPS", Value: fmt.Sprintf("%f", 15.0)},
@@ -71,9 +71,8 @@ func TestExample(t *testing.T) {
 	section.End()
 
 	// print out section results in a human-friendly format
-	report := &measurement.Report{
-		Sections: []measurement.Section{section},
-	}
+	report := measurement.NewReport("Example")
+	report.Sections = []measurement.Section{section}
 	report.PrettyPrint(os.Stdout)
 
 	// Fail the test if any section had errors.
