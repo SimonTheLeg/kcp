@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kcpkubernetesclientset "github.com/kcp-dev/client-go/kubernetes"
+	"github.com/kcp-dev/sdk/apis/core"
 	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned/cluster"
 
 	"github.com/kcp-dev/kcp/test/load/pkg/framework"
@@ -39,7 +40,16 @@ import (
 	"github.com/kcp-dev/kcp/test/load/pkg/tuningset"
 )
 
+const simpleCrudWorkspaceCount = 10000
+const simpleCrudWorkspaceDepth = 5
+const simpleCrudCreateWorkspaceQPS = 2.0
 const crudConfigMapQPS = 10.0
+
+// defaultTree returns the default workspace tree configuration for tests.
+// It creates a symmetric tree rooted at the root cluster.
+func defaultTree() tree.WorkspaceTree {
+	return tree.NewSymmetricTree(core.RootCluster.Path(), simpleCrudWorkspaceCount, simpleCrudWorkspaceDepth)
+}
 
 func TestWorkspaceSimpleCRUD(t *testing.T) {
 	cfg := framework.Require(t, framework.KCPFrontProxyKubeconfig)
@@ -54,16 +64,10 @@ func TestWorkspaceSimpleCRUD(t *testing.T) {
 
 	wt := defaultTree()
 
-	// Ensure workspaces exist, creating them if necessary.
-	exist, err := workspacesExist(wt, client, workspaceCount)
+	// Ensure workspaces exist (they should be created by workspace_creation_test first)
+	exist, err := simpleCrudWorkspacesExist(wt, client, simpleCrudWorkspaceCount)
 	require.NoError(t, err)
-	if exist {
-		t.Logf("workspaces already exist, skipping creation")
-	} else {
-		t.Logf("Creating required workspaces")
-		createSection := createWorkspaces(t, client, createWorkspaceQPS)
-		sections = append(sections, createSection)
-	}
+	require.True(t, exist, "workspaces must be created before running this test (run workspace_creation_test first)")
 
 	t.Logf("Running configmap CRUD operations")
 	crudSection := crudConfigMaps(t, wt, kubeClusterClient, crudConfigMapQPS)
@@ -86,7 +90,7 @@ func crudConfigMaps(t *testing.T, wt tree.WorkspaceTree, kubeClusterClient kcpku
 	section := measurement.Section{
 		Title: "ConfigMap CRUD",
 		Parameters: []measurement.Parameter{
-			{Key: "Workspaces", Value: fmt.Sprintf("%d", workspaceCount)},
+			{Key: "Workspaces", Value: fmt.Sprintf("%d", simpleCrudWorkspaceCount)},
 			{Key: "QPS", Value: fmt.Sprintf("%f", qps)},
 		},
 		Sink: &measurement.Memory{
@@ -94,7 +98,7 @@ func crudConfigMaps(t *testing.T, wt tree.WorkspaceTree, kubeClusterClient kcpku
 		},
 	}
 
-	ts := tuningset.NewUniformQPS(qps, workspaceCount, 1)
+	ts := tuningset.NewUniformQPS(qps, simpleCrudWorkspaceCount, 1)
 	section.Start()
 	action := func(seq int, s measurement.Sink) error {
 		cmClient := kubeClusterClient.Cluster(wt.PathForSequenceNumber(seq)).CoreV1().ConfigMaps("default")
@@ -147,10 +151,10 @@ func crudConfigMaps(t *testing.T, wt tree.WorkspaceTree, kubeClusterClient kcpku
 	return section
 }
 
-// workspacesExist checks whether count workspaces already exist by
+// simpleCrudWorkspacesExist checks whether count workspaces already exist by
 // verifying that the last workspace name is present. This is a cheap heuristic
 // that avoids listing all workspaces.
-func workspacesExist(wt tree.WorkspaceTree, client kcpclientset.ClusterInterface, count int) (bool, error) {
+func simpleCrudWorkspacesExist(wt tree.WorkspaceTree, client kcpclientset.ClusterInterface, count int) (bool, error) {
 	lastName := wt.WorkspaceName(count)
 	parentPath := wt.PathForSequenceNumber(wt.ParentSequenceNumber(count))
 	_, err := client.Cluster(parentPath).TenancyV1alpha1().Workspaces().Get(context.Background(), lastName, metav1.GetOptions{})
